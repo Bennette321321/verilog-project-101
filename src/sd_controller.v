@@ -337,23 +337,22 @@ module sd_controller(
                     spi_tx_data <= 8'hFF;  // Send dummy bytes while waiting
                     
                     if (data_valid) begin
-                        // Valid response starts with bit 7 = 0
-                        if (spi_rx_data[7] == 0) begin
-                            // For CMD17 (read block), move to read data state
-                            if (cmd_index == CMD17) begin
-                                state <= READ_DATA;
-                                byte_counter <= 0;
+                            // Valid response starts with bit 7 = 0
+                            if (spi_rx_data[7] == 0) begin
+                                // For CMD17 (read block), move to read data state
+                                if (cmd_index == CMD17) begin
+                                    state <= READ_DATA;
+                                    byte_counter <= 0;
+                                end
+                                // For initialization commands, return to INIT state
+                                else if (state != INIT) begin
+                                    state <= IDLE;
+                                end
                             end
-                            // For initialization commands, return to INIT state
-                            else if (state != INIT) begin
-                                state <= IDLE;
-                            end
-                        end
-                        // Increment timeout counter if no response
-                        else begin
+                            else begin
+                                // If we've sent too many dummy bytes without response, timeout
                             byte_counter <= byte_counter + 1;
-                            // Timeout after 100 dummy bytes
-                            if (byte_counter > 100) begin
+                            if (byte_counter > 100) begin  // Timeout
                                 state <= IDLE;
                                 busy <= 0;
                             end
@@ -362,19 +361,17 @@ module sd_controller(
                 end
                 
                 READ_DATA: begin
-                    // Wait for data token (0xFE) indicating start of data block
+                    // Wait for data token (0xFE) from SD card
                     spi_tx_data <= 8'hFF;  // Send dummy bytes while waiting
                     
                     if (data_valid) begin
-                        if (spi_rx_data == 8'hFE) begin
-                            // Data token received, start reading block
+                        if (spi_rx_data == 8'hFE) begin  // Start of data block
                             state <= READ_BLOCK;
                             block_counter <= 0;
                         end
                         else begin
                             byte_counter <= byte_counter + 1;
-                            // Timeout after 1000 dummy bytes
-                            if (byte_counter > 1000) begin
+                            if (byte_counter > 100) begin  // Timeout
                                 state <= IDLE;
                                 busy <= 0;
                             end
@@ -384,7 +381,7 @@ module sd_controller(
                 
                 READ_BLOCK: begin
                     // Read 512-byte data block
-                    spi_tx_data <= 8'hFF;  // Send dummy bytes while reading
+                    spi_tx_data <= 8'hFF;
                     
                     if (data_valid) begin
                         // Store received data
@@ -393,38 +390,33 @@ module sd_controller(
                         
                         block_counter <= block_counter + 1;
                         
-                        // After receiving 512 bytes
+                        // After reading 512 bytes
                         if (block_counter == 511) begin
                             state <= WAIT_BUSY;
-                            block_counter <= 0;
-                            read_done <= 1;  // Signal that read is complete
+                            byte_counter <= 0;
                         end
                     end
                 end
                 
                 WAIT_BUSY: begin
-                    // Read CRC (2 bytes) and wait for card to finish busy state
+                    // Read 2 CRC bytes and wait for card to finish being busy
                     spi_tx_data <= 8'hFF;
                     
                     if (data_valid) begin
-                        // Skip 2 CRC bytes
-                        if (block_counter < 2) begin
-                            block_counter <= block_counter + 1;
-                        end
-                        // Wait until SD card is not busy (MISO = 1)
-                        else if (spi_rx_data == 8'hFF) begin
+                        byte_counter <= byte_counter + 1;
+                        
+                        if (byte_counter >= 2 && spi_rx_data == 8'hFF) begin
+                            // Card is not busy anymore
                             state <= IDLE;
                             busy <= 0;
-                            spi_cs <= 1;  // Deactivate chip select
+                            read_done <= 1;
+                            spi_cs <= 1;  // Deselect card
                         end
-                        else begin
-                            byte_counter <= byte_counter + 1;
-                            // Timeout after waiting too long
-                            if (byte_counter > 10000) begin
-                                state <= IDLE;
-                                busy <= 0;
-                                spi_cs <= 1;
-                            end
+                        
+                        if (byte_counter > 100) begin  // Timeout
+                            state <= IDLE;
+                            busy <= 0;
+                            spi_cs <= 1;
                         end
                     end
                 end
