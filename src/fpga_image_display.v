@@ -41,7 +41,7 @@ module fpga_image_display(
     wire video_on;                   // Video active region
     
     // Memory interface signals
-    wire [7:0] pixel_data;           // Pixel data from memory
+    wire [15:0] pixel_data;          // Pixel data from memory (RGB565 format)
     reg [16:0] pixel_addr;           // Address for framebuffer
     
     // Button debouncing
@@ -54,6 +54,11 @@ module fpga_image_display(
     reg [31:0] sd_read_addr;        // Address to read from SD card
     wire [7:0] sd_read_data;        // Data read from SD card
     wire sd_valid;                  // Data valid signal
+    
+    // Data formatter signals
+    wire [15:0] formatted_data;      // Formatted RGB565 data
+    wire formatted_valid;            // Formatted data valid
+    reg [17:0] write_byte_counter;   // Count bytes being written to framebuffer
     
     // Clock generation module
     clock_generator clock_gen (
@@ -82,14 +87,25 @@ module fpga_image_display(
         .pixel_tick(vga_pixel_tick)
     );
     
-    // Frame buffer (dual-port RAM)
+    // Image formatter - convert 8-bit SD data to 16-bit RGB565
+    image_formatter img_fmt (
+        .clk(clk),
+        .reset_n(reset_n),
+        .sd_data(sd_read_data),
+        .sd_valid(sd_valid),
+        .byte_counter(write_byte_counter[0]),  // Odd/even byte
+        .pixel_data(formatted_data),
+        .pixel_valid(formatted_valid)
+    );
+    
+    // Frame buffer (dual-port RAM) for RGB565 format
     frame_buffer frame_buf (
         .clk(clk),
-        .we(sd_valid),             // Write enable during SD read
-        .read_addr(pixel_addr),    // Read address for VGA display
-        .write_addr(sd_read_addr[16:0]), // Write address during SD card read
-        .write_data(sd_read_data), // Data from SD card
-        .read_data(pixel_data)     // Data to VGA display
+        .we(formatted_valid),             // Write enable during formatted data valid
+        .read_addr(pixel_addr),           // Read address for VGA display
+        .write_addr(write_byte_counter[17:1]), // Write address (divide by 2 for 16-bit data)
+        .write_data(formatted_data),      // 16-bit RGB565 data
+        .read_data(pixel_data)            // 16-bit data to VGA display
     );
     
     // SD card controller
@@ -115,13 +131,26 @@ module fpga_image_display(
             image_index <= 0;
             sd_start_read <= 0;
             image_load_done <= 0;
+            write_byte_counter <= 0;
         end else begin
             state <= next_state;
+            
+            // Track SD read data bytes
+            if (sd_valid && state == STATE_READ_IMAGE) begin
+                write_byte_counter <= write_byte_counter + 1;
+                
+                // Mark image as loaded after reading full image
+                // 320x240 pixels × 2 bytes/pixel = 153,600 bytes
+                if (write_byte_counter == 153599) begin
+                    image_load_done <= 1;
+                end
+            end
             
             // Handle button press for image switching
             if (state == STATE_DISPLAY && btn_next_debounced) begin
                 image_index <= image_index + 1;
                 image_load_done <= 0;
+                write_byte_counter <= 0;
             end
             
             // Control SD card read operation
@@ -131,9 +160,9 @@ module fpga_image_display(
                 sd_start_read <= 0;
             end
             
-            // Mark image as loaded when read is complete
-            if (sd_read_done) begin
-                image_load_done <= 1;
+            // Reset byte counter when starting a new read
+            if (state == STATE_SWITCH_IMAGE) begin
+                write_byte_counter <= 0;
             end
         end
     end
@@ -163,9 +192,9 @@ module fpga_image_display(
     
     // Calculate SD card read address based on image index
     always @(*) begin
-        // Each 320x240 RGB image occupies 320*240*3 = 230,400 bytes
+        // Each 320x240 RGB565 image occupies 320*240*2 = 153,600 bytes
         // Add offset for image header/metadata if needed
-        sd_read_addr = image_index * 230400;
+        sd_read_addr = image_index * 153600;
     end
     
     // Calculate pixel address for reading from frame buffer
@@ -173,10 +202,10 @@ module fpga_image_display(
         pixel_addr = pixel_y * 320 + pixel_x;
     end
     
-    // RGB data output - convert from 8-bit format to 4-bit per channel
-    // Assuming pixel_data format is [R2:R0,G2:G0,B1:B0]
-    assign vga_r = video_on ? pixel_data[7:4] : 4'b0000;
-    assign vga_g = video_on ? pixel_data[3:2] : 4'b0000;
-    assign vga_b = video_on ? pixel_data[1:0] : 4'b0000;
+    // RGB data output - convert from 16-bit RGB565 format to 4-bit per channel
+    // RGB565: [R4:R0,G5:G0,B4:B0]
+    assign vga_r = video_on ? {pixel_data[15:12]} : 4'b0000;
+    assign vga_g = video_on ? {pixel_data[10:7]} : 4'b0000;  // Take upper 4 bits of green
+    assign vga_b = video_on ? {pixel_data[4:1]} : 4'b0000;   // Take upper 4 bits of blue
 
 endmodule
