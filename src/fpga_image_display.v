@@ -27,13 +27,20 @@ module fpga_image_display(
     localparam STATE_READ_IMAGE = 1;
     localparam STATE_DISPLAY = 2;
     localparam STATE_SWITCH_IMAGE = 3;
+    localparam STATE_FADE_TRANSITION = 4;  // New state for fade effect
     
-    reg [1:0] state;
-    reg [1:0] next_state;
+    reg [2:0] state;                 // Updated to 3 bits for new state
+    reg [2:0] next_state;
     
     // Image-related signals
     reg [7:0] image_index;           // Current image index
     reg image_load_done;             // Flag for image loading completion
+    reg current_buffer;              // Current display buffer
+    
+    // Fade transition parameters
+    reg [7:0] fade_counter;          // Counter for fade effect
+    reg fade_direction;              // 0=Fade out, 1=Fade in
+    reg [7:0] blend_factor;          // Calculated blend factor
     
     // VGA control signals
     wire vga_pixel_tick;             // Pixel clock tick
@@ -42,7 +49,10 @@ module fpga_image_display(
     
     // Memory interface signals
     wire [15:0] pixel_data;          // Pixel data from memory (RGB565 format)
+    wire [15:0] pixel_data_a;        // Pixel data from buffer A
+    wire [15:0] pixel_data_b;        // Pixel data from buffer B
     reg [16:0] pixel_addr;           // Address for framebuffer
+    reg display_blend_mode;          // Enable blend mode
     
     // Button debouncing
     wire btn_next_debounced;
@@ -98,14 +108,19 @@ module fpga_image_display(
         .pixel_valid(formatted_valid)
     );
     
-    // Frame buffer (dual-port RAM) for RGB565 format
-    frame_buffer frame_buf (
+    // Enhanced dual frame buffer with blending capability
+    dual_frame_buffer frame_buf (
         .clk(clk),
-        .we(formatted_valid),             // Write enable during formatted data valid
-        .read_addr(pixel_addr),           // Read address for VGA display
+        .we(formatted_valid),                  // Write enable during formatted data valid
+        .buffer_select(current_buffer),        // Select which buffer to write to
+        .display_mode(display_blend_mode),     // 0=single buffer, 1=blend mode
+        .read_addr(pixel_addr),                // Read address for VGA display
         .write_addr(write_byte_counter[17:1]), // Write address (divide by 2 for 16-bit data)
-        .write_data(formatted_data),      // 16-bit RGB565 data
-        .read_data(pixel_data)            // 16-bit data to VGA display
+        .write_data(formatted_data),           // 16-bit RGB565 data
+        .blend_factor(blend_factor),           // Blend factor for transition
+        .read_data_a(pixel_data_a),            // Output from buffer A
+        .read_data_b(pixel_data_b),            // Output from buffer B
+        .read_data(pixel_data)                 // Final output pixel data
     );
     
     // SD card controller
@@ -132,6 +147,11 @@ module fpga_image_display(
             sd_start_read <= 0;
             image_load_done <= 0;
             write_byte_counter <= 0;
+            current_buffer <= 0;
+            display_blend_mode <= 0;
+            fade_counter <= 0;
+            fade_direction <= 0;
+            blend_factor <= 0;
         end else begin
             state <= next_state;
             
@@ -151,6 +171,8 @@ module fpga_image_display(
                 image_index <= image_index + 1;
                 image_load_done <= 0;
                 write_byte_counter <= 0;
+                fade_direction <= 0;  // Start with fade out
+                fade_counter <= 0;
             end
             
             // Control SD card read operation
@@ -163,6 +185,36 @@ module fpga_image_display(
             // Reset byte counter when starting a new read
             if (state == STATE_SWITCH_IMAGE) begin
                 write_byte_counter <= 0;
+                // Toggle current buffer for next image
+                current_buffer <= ~current_buffer;
+            end
+            
+            // Handle fade transition effect
+            if (state == STATE_FADE_TRANSITION) begin
+                // Update fade counter based on direction
+                if (fade_direction == 0) begin  // Fade out
+                    if (fade_counter < 255)
+                        fade_counter <= fade_counter + 2;  // Increment by 2 for faster transition
+                    else begin
+                        fade_direction <= 1;  // Change to fade in
+                        fade_counter <= 255;
+                    end
+                end else begin  // Fade in
+                    if (fade_counter > 0)
+                        fade_counter <= fade_counter - 2;  // Decrement by 2 for faster transition
+                end
+                
+                // Calculate blend factor based on fade counter and direction
+                if (fade_direction == 0)  // Fade out: blend from current to black
+                    blend_factor <= fade_counter;
+                else  // Fade in: blend from black to new image
+                    blend_factor <= 255 - fade_counter;
+                    
+                // Enable blend mode during transition
+                display_blend_mode <= 1;
+            end else begin
+                // Disable blend mode in other states
+                display_blend_mode <= 0;
             end
         end
     end
@@ -181,7 +233,14 @@ module fpga_image_display(
             end
             
             STATE_DISPLAY: begin
-                if (btn_next_debounced) next_state = STATE_SWITCH_IMAGE;
+                if (btn_next_debounced) next_state = STATE_FADE_TRANSITION;
+            end
+            
+            STATE_FADE_TRANSITION: begin
+                if (fade_direction == 1 && fade_counter == 0) 
+                    next_state = STATE_DISPLAY;  // Fade in complete
+                else if (fade_direction == 0 && fade_counter == 255)
+                    next_state = STATE_SWITCH_IMAGE;  // Fade out complete, load new image
             end
             
             STATE_SWITCH_IMAGE: begin
