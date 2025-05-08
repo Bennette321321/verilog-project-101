@@ -85,17 +85,30 @@ module sd_controller(
         end
     end
     
-    // SPI data transmission
+    // Combined SPI data transmission & main state machine
     always @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
             spi_mosi <= 1;
             spi_bit_counter <= 7;
             spi_rx_data <= 8'h00;
             data_valid <= 0;
+            state <= IDLE;
+            init_state <= 0;
+            init_done <= 0;
+            busy <= 0;
+            spi_cs <= 1;  // Inactive
+            spi_clk_en <= 0;
+            cmd_index <= 0;
+            cmd_arg <= 0;
+            byte_counter <= 0;
+            block_counter <= 0;
+            read_done <= 0;
+            spi_tx_data <= 8'hFF;  // Initialize to all 1's (idle state for SPI)
         end
         else begin
-            // Default state
+            // Default state for control signals
             data_valid <= 0;
+            read_done <= 0;
             
             // On falling edge of SPI clock
             if (spi_clk_en && spi_clk_divider == 0 && spi_sclk == 1) begin
@@ -118,28 +131,8 @@ module sd_controller(
                     spi_bit_counter <= spi_bit_counter - 1;
                 end
             end
-        end
-    end
-    
-    // Main SD card state machine
-    always @(posedge clk or negedge reset_n) begin
-        if (!reset_n) begin
-            state <= IDLE;
-            init_state <= 0;
-            init_done <= 0;
-            busy <= 0;
-            spi_cs <= 1;  // Inactive
-            spi_clk_en <= 0;
-            cmd_index <= 0;
-            cmd_arg <= 0;
-            byte_counter <= 0;
-            block_counter <= 0;
-            read_done <= 0;
-        end
-        else begin
-            // Default state for control signals
-            read_done <= 0;
             
+            // Main state machine
             case (state)
                 IDLE: begin
                     spi_cs <= 1;  // Inactive

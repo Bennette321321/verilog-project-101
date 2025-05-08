@@ -8,7 +8,7 @@ set_property PACKAGE_PIN U18 [get_ports reset_n]
 set_property IOSTANDARD LVCMOS33 [get_ports reset_n]
 
 ## Image Next Button
-set_property PACKAGE_PIN U19 [get_ports btn_next]
+set_property PACKAGE_PIN T17 [get_ports btn_next]
 set_property IOSTANDARD LVCMOS33 [get_ports btn_next]
 
 ## VGA Output
