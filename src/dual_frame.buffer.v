@@ -18,6 +18,7 @@ module dual_frame_buffer(
     reg [15:0] buffer_b [0:76799];  // 320 * 240 = 76,800 pixels
     
     reg [15:0] data_a, data_b;
+    wire [15:0] blended_output;     // Wire to connect blender output
     
     // Write operation
     always @(posedge clk) begin
@@ -51,7 +52,6 @@ module dual_frame_buffer(
     );
     
     // Output selection based on display mode
-    wire [15:0] blended_output;
     assign read_data = display_mode ? blended_output : (buffer_select ? data_b : data_a);
 
 endmodule

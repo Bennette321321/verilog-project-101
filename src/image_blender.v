@@ -21,40 +21,78 @@ module image_blender(
     assign g_b = image_b[10:5];
     assign b_b = image_b[4:0];
     
-    // Temporary values for intermediate calculations
-    reg [12:0] r_temp, g_temp, b_temp;
+    // Convert to larger bit width for calculations
+    reg [12:0] r_a_ext, r_b_ext;
+    reg [13:0] g_a_ext, g_b_ext;
+    reg [12:0] b_a_ext, b_b_ext;
+    
+    // Results for blended components
+    reg [12:0] r_blended_ext;
+    reg [13:0] g_blended_ext;
+    reg [12:0] b_blended_ext;
+    
     reg [4:0] r_blended;
     reg [5:0] g_blended;
     reg [4:0] b_blended;
     
-    // Perform alpha blending calculation
+    // Pipeline stage 1: Extend bit widths and multiply
     always @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
-            r_temp <= 0;
-            g_temp <= 0;
-            b_temp <= 0;
+            r_a_ext <= 0;
+            r_b_ext <= 0;
+            g_a_ext <= 0;
+            g_b_ext <= 0;
+            b_a_ext <= 0;
+            b_b_ext <= 0;
+        end
+        else begin
+            // Extend to larger bit width and multiply by blend factors
+            r_a_ext <= r_a * (255 - blend_factor);
+            r_b_ext <= r_b * blend_factor;
+            
+            g_a_ext <= g_a * (255 - blend_factor);
+            g_b_ext <= g_b * blend_factor;
+            
+            b_a_ext <= b_a * (255 - blend_factor);
+            b_b_ext <= b_b * blend_factor;
+        end
+    end
+    
+    // Pipeline stage 2: Add components and divide by 255
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            r_blended_ext <= 0;
+            g_blended_ext <= 0;
+            b_blended_ext <= 0;
+        end
+        else begin
+            r_blended_ext <= (r_a_ext + r_b_ext) / 255;
+            g_blended_ext <= (g_a_ext + g_b_ext) / 255;
+            b_blended_ext <= (b_a_ext + b_b_ext) / 255;
+        end
+    end
+    
+    // Pipeline stage 3: Convert back to RGB565 format components
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
             r_blended <= 0;
             g_blended <= 0;
             b_blended <= 0;
+        end
+        else begin
+            // Clamp to bit width
+            r_blended <= (r_blended_ext > 31) ? 5'd31 : r_blended_ext[4:0];
+            g_blended <= (g_blended_ext > 63) ? 6'd63 : g_blended_ext[5:0];
+            b_blended <= (b_blended_ext > 31) ? 5'd31 : b_blended_ext[4:0];
+        end
+    end
+    
+    // Final stage: Combine components into RGB565 format
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
             blended_output <= 0;
         end
         else begin
-            // Linear interpolation: output = (1-alpha)*A + alpha*B
-            // Where alpha = blend_factor/255
-            
-            // Calculate red component
-            r_temp <= (r_a * (255 - blend_factor) + r_b * blend_factor) / 255;
-            r_blended <= r_temp[4:0];
-            
-            // Calculate green component
-            g_temp <= (g_a * (255 - blend_factor) + g_b * blend_factor) / 255;
-            g_blended <= g_temp[5:0];
-            
-            // Calculate blue component
-            b_temp <= (b_a * (255 - blend_factor) + b_b * blend_factor) / 255;
-            b_blended <= b_temp[4:0];
-            
-            // Combine components back to RGB565 format
             blended_output <= {r_blended, g_blended, b_blended};
         end
     end

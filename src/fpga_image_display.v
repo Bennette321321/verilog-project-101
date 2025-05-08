@@ -68,7 +68,7 @@ module fpga_image_display(
     // Data formatter signals
     wire [15:0] formatted_data;      // Formatted RGB565 data
     wire formatted_valid;            // Formatted data valid
-    reg [17:0] write_byte_counter;   // Count bytes being written to framebuffer
+    reg [16:0] write_byte_counter;   // Count bytes being written to framebuffer
     
     // Clock generation module
     clock_generator clock_gen (
@@ -103,7 +103,7 @@ module fpga_image_display(
         .reset_n(reset_n),
         .sd_data(sd_read_data),
         .sd_valid(sd_valid),
-        .byte_counter(write_byte_counter[0]),  // Odd/even byte
+        .byte_counter(write_byte_counter[0]),  // Correctly passing the bit to determine odd/even byte
         .pixel_data(formatted_data),
         .pixel_valid(formatted_valid)
     );
@@ -115,7 +115,7 @@ module fpga_image_display(
         .buffer_select(current_buffer),        // Select which buffer to write to
         .display_mode(display_blend_mode),     // 0=single buffer, 1=blend mode
         .read_addr(pixel_addr),                // Read address for VGA display
-        .write_addr(write_byte_counter[17:1]), // Write address (divide by 2 for 16-bit data)
+        .write_addr(write_byte_counter), // Write address for RGB888 (divide by 3 optimized)
         .write_data(formatted_data),           // 16-bit RGB565 data
         .blend_factor(blend_factor),           // Blend factor for transition
         .read_data_a(pixel_data_a),            // Output from buffer A
@@ -155,13 +155,14 @@ module fpga_image_display(
         end else begin
             state <= next_state;
             
-            // Track SD read data bytes
+            // Track SD read data bytes for RGB888 format
+            // Each pixel uses 3 bytes (RGB)
             if (sd_valid && state == STATE_READ_IMAGE) begin
                 write_byte_counter <= write_byte_counter + 1;
                 
                 // Mark image as loaded after reading full image
-                // 320x240 pixels × 2 bytes/pixel = 153,600 bytes
-                if (write_byte_counter == 153599) begin
+                // 320x240 pixels × 3 bytes/pixel = 230,400 bytes
+                if (write_byte_counter >= 230399) begin
                     image_load_done <= 1;
                 end
             end

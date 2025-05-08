@@ -3,9 +3,9 @@ module image_formatter(
     input wire reset_n,
     input wire [7:0] sd_data,        // Input data from SD card
     input wire sd_valid,             // SD data valid signal
+    input wire byte_counter,         // Input to determine odd/even byte position
     output reg [15:0] pixel_data,    // Output pixel data for framebuffer (RGB565 format)
-    output reg pixel_valid,          // Pixel data valid signal
-    output reg [16:0] pixel_addr     // Pixel address for writing to framebuffer
+    output reg pixel_valid           // Pixel data valid signal
 );
 
     // State machine for converting from raw bytes to pixels
@@ -16,7 +16,7 @@ module image_formatter(
     
     reg [1:0] state;
     reg [7:0] r_byte, g_byte, b_byte;
-    reg [16:0] byte_counter;
+    reg [15:0] rgb565_data;
     
     // Convert from 24-bit RGB888 to 16-bit RGB565 format
     function [15:0] rgb888_to_rgb565;
@@ -32,8 +32,9 @@ module image_formatter(
             state <= STATE_IDLE;
             pixel_data <= 16'h0000;
             pixel_valid <= 0;
-            pixel_addr <= 0;
-            byte_counter <= 0;
+            r_byte <= 0;
+            g_byte <= 0;
+            b_byte <= 0;
         end
         else begin
             // Default values
@@ -59,12 +60,9 @@ module image_formatter(
                         b_byte <= sd_data;
                         
                         // Convert RGB888 to RGB565
+                        rgb565_data <= rgb888_to_rgb565(r_byte, g_byte, sd_data);
                         pixel_data <= rgb888_to_rgb565(r_byte, g_byte, sd_data);
                         pixel_valid <= 1;
-                        
-                        // Calculate pixel address
-                        pixel_addr <= byte_counter / 3;  // Convert byte address to pixel address
-                        byte_counter <= byte_counter + 1;
                         
                         // Back to start for next pixel
                         state <= STATE_IDLE;
